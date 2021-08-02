@@ -4,7 +4,6 @@ from PyQt5.QtWidgets import QLabel
 from PyQt5.QtGui import QPixmap
 
 import torch
-from torchvision import transforms
 from PIL.ImageQt import ImageQt
 from PIL import Image
 
@@ -21,6 +20,8 @@ class MainWindow(QMainWindow):
         self.deepLabV3()
     
     def deepLabV3(self):
+        from torchvision import transforms
+
         input_image = Image.open("dog.jpg")
         preprocess = transforms.Compose([
             transforms.ToTensor(),
@@ -28,7 +29,7 @@ class MainWindow(QMainWindow):
         ])
 
         input_tensor = preprocess(input_image)
-        input_batch = input_tensor.unsqueeze(0) # create a mini-batch as expected by the model
+        input_batch = input_tensor.unsqueeze(0) #create a mini-batch as expected by the model
 
         input_batch = input_batch.to('cuda')
         self.model.to('cuda')

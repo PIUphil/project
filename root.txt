@@ -1,0 +1,42 @@
+
+
+네트워크 드라이브
+\\192.168.55.1\root
+
+
+\\192.168.10.4\root
+
+root계정 
+아이디 : root
+비번 : #soda!
+
+
+usr/local/lib/python3.6/dist-packages/pop/	라이브러리 모여있음
+
+vscode 실행
+
+원격연결 닫기
+열린폴더 닫기
+
+
+폴더 열기 (로컬경로)
+z/usr/l/l/p/dist-/p  
+편집
+
+class axis6():
+.... 
+
+
+class AutoCar 전까지
+지우고 깃허브 내용 복사해 넣음
+
+------------------------------
+
+칩 검색 MPU-6050
+ResiterMap 검색
+
+제어에 필요한 레지스터 명령
+
+
+
+

@@ -93,3 +93,76 @@ ndarray = img.imread(fileName)
 plt.imshow(ndarray) 
 plt.show()
 ```
+
+방향조절.py
+```
+import time
+import serial
+from pop.Pilot import SerBot
+from pop.CAN import OmniWheel
+from threading import Thread
+from pop.CAN import OmniWheel
+import numpy as np
+
+ser = serial.Serial("/dev/ttyUSB0", 115200) 
+ret = ser.readline()
+omni = OmniWheel()
+#map = np.array([1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1])
+map = np.ones(20)
+
+
+def getSignal():
+
+    global ret
+    while True:
+        try:
+            ret = ser.readline()
+            if ret:
+                print(ret.decode()[:-3])        # 제일 뒤의 '\n'을 뺌
+        except(KeyboardInterrupt):
+            break
+
+    ser.close()
+
+
+if __name__ == '__main__':
+
+    th = Thread(target=getSignal)
+    th.daemon = True      
+    th.start()
+
+    time.sleep(1)
+
+    while True:
+        if ret:
+            direction = float(ret.decode()[-10:-3])
+            break
+        else:
+            time.sleep(0.5)
+
+
+    while True:
+        print("direction : ",direction)
+        print("now : ",float(ret.decode()[-10:-3]))
+        if direction > float(ret.decode()[-10:-3]):
+            if (direction - float(ret.decode()[-10:-3])) > 0.05:
+                print("turn left")
+
+                omni.forward([15,15,15])
+            else:
+                omni.wheel(1,40)
+                omni.wheel(2,-41)
+
+        elif direction < float(ret.decode()[-10:-3]):
+            if (direction - float(ret.decode()[-10:-3])) < -0.05:
+                print("turn right")
+                omni.backward([15,15,15])
+            else:
+                omni.wheel(1,40)
+                omni.wheel(2,-41)
+
+            
+        else:
+            omni.wheel(1,40)
+            omni.wheel(2,-41)
+```

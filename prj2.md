@@ -61,10 +61,12 @@ if check:
                 
                 receiveQuat[0] = float(receiveQuat[0])
                 receiveQuat[1] = float(receiveQuat[1])
+                receiveQuat[2] = float(receiveQuat[0])
                 
                 if receiveQuat[1] < 0:
                     receiveQuat[0] *= -1
-                    #receiveQuat[1] *= -1
+                if receiveQuat[2] < 0:
+                    receiveQuat[1] *= -1
                     
                 quat[0].value = receiveQuat[0]
                 quat[1].value = receiveQuat[1]
@@ -75,8 +77,8 @@ if check:
                 if receiveQuat[0] > -0.97 and receiveQuat[0] < 0.97:
                     angle.value = int(((np.arccos(float(receiveQuat[0]))*(-2)*(180/math.pi)))%360)
                 else:
-                    angle.value = int(((np.arcsin(float(receiveQuat[1]))*2*(180/math.pi)))%360)
-                
+                    angle.value = int(((np.arcsin(float(receiveQuat[1]))*(-2)*(180/math.pi)))%360)
+                    
         except(KeyboardInterrupt):
             break
 ```

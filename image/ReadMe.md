@@ -1,0 +1,6 @@
+![crown](https://user-images.githubusercontent.com/58851945/129472078-2b15915f-ed45-42f6-b36f-f552dd0139e8.png)
+![earring](https://user-images.githubusercontent.com/58851945/129472080-796fafc7-e134-4769-99d4-ae242eba72b2.png)
+![headdress](https://user-images.githubusercontent.com/58851945/129472082-ca68c90d-e769-4b5d-8c88-b94fed5d11fd.png)
+![thurible](https://user-images.githubusercontent.com/58851945/129472083-4ad8aa81-6808-45db-94c5-800bad08f557.png)
+![tomb](https://user-images.githubusercontent.com/58851945/129472084-6d5952f8-7893-4929-87e0-eb386d8a9731.png)
+![wc](https://user-images.githubusercontent.com/58851945/129472085-e73aaa49-8cce-4dcc-aebb-336b0b69d140.png)

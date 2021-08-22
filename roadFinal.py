@@ -7,6 +7,7 @@ import time
 from PIL import Image
 from threading import Thread
 import subprocess
+from gtts import gTTS
 
 import numpy as np
 import matplotlib.pyplot as plt

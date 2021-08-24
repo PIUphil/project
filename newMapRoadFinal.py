@@ -1,25 +1,517 @@
 import sys 
 from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QProgressBar
 from PyQt5.QtGui import QFont, QPixmap
-from PyQt5.QtCore import QCoreApplication, Qt, QRect
-
-import time
+from PyQt5.QtCore import QCoreApplication, Qt, noshowbase, QRect
 from PIL import Image
-from threading import Thread
-import subprocess
-
 import numpy as np
+import time
+import serial
+import subprocess
+from pop import LiDAR
+from threading import Thread
 import matplotlib.pyplot as plt
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+import math
+from pop.CAN import OmniWheel
+from pop import Pilot
+from gtts import gTTS
+from random import randint
+from popAssist import create_conversation_stream, GAssistant
+import pyaudio
+from gtts import gTTS
+import wave
 #%matplotlib inline
 #%%
 
+startlocation = 0
 
-from popAssist import create_conversation_stream, GAssistant
-import pyaudio
-# from gtts import gTTS
-import wave
+class mapping:
 
+    def __init__(self, width = 5, height = 5, map = np.zeros((5,5))):
+        self.ser = serial.Serial("/dev/ttyUSB1", 115200)
+        self.ser2 = serial.Serial("/dev/ttyUSB2", 115200)
+        self.map = np.zeros((width,height))
+        self.omni = OmniWheel()
+        self.serbot = Pilot.SerBot()
+        self.stack = 0
+        self.point = [(2, 26), (27, 26), (39, 26), (51, 26), (63, 26), (79, 26)]
+        self.goallist = [(79, 30), (2, 10), (2, 20), (2, 29), (27, 2), (39, 2), (51, 2), (63, 2), (79, 2), (27, 38), (39, 38), (51, 38), (63, 38)]
+        self.lidarvalue = [1000,1000,1000,0]
+        self.check_wall = False
+
+    def __del__(self):
+        self.lidar.stopMotor()
+        self.omni.stop()
+
+    def get_signal(self):
+        global startlocation
+        while True:
+            self.ret2 = self.ser2.readline().decode()[:-2].split(',')
+            time.sleep(0.01)
+            print(self.ret2)
+            if self.ret2:
+                if self.ret2[0][2:] == 'tect':
+                    self.go_goal(0.6,0,8)
+                    break
+            if self.ret2:
+                if self.ret2[0][2:] == 'change':
+                    self.go_goal(0.6,1,startlocation)
+                    break
+
+    def check_lidar(self):
+        self.lidar = LiDAR.Rplidar()
+        self.lidar.connect()
+        self.lidar.startMotor()
+        a = 1000
+        b = 1000
+        while True:
+            vectors = self.lidar.getVectors()
+            time.sleep(0.2)
+            try:
+
+                if (min(vectors[np.logical_and(330 < vectors[:,0], vectors[:,0] < 360)][:,1])) < (min(vectors[np.logical_and(0 < vectors[:,0], vectors[:,0] < 30)][:,1])):
+                    self.lidarvalue[0] = (min(vectors[np.logical_and(330 < vectors[:,0], vectors[:,0] < 360)][:,1]))
+                else:
+                    self.lidarvalue[0] = (min(vectors[np.logical_and(0 < vectors[:,0], vectors[:,0] < 30)][:,1]))
+
+                self.lidarvalue[1] = min(vectors[np.logical_and(290 < vectors[:,0], vectors[:,0] < 330)][:,1])
+                self.lidarvalue[2] = min(vectors[np.logical_and(30 < vectors[:,0], vectors[:,0] < 70)][:,1])
+                
+                a = (vectors[np.logical_and(80 < vectors[:,0], vectors[:,0] < 100)][:,1]).mean()
+                b = (vectors[np.logical_and(260 < vectors[:,0], vectors[:,0] < 280)][:,1]).mean()
+                
+                if b >2000 or a > 2000:
+                    self.lidarvalue[3] = 1
+                else:
+                    self.lidarvalue[3] = 0
+                
+            except:
+                pass
+            
+            #print(self.lidarvalue)
+
+    def check_cross(self):
+        if self.lidarvalue[3] == 1:  
+            self.stack += 1
+        else:
+            self.stack = 0
+
+    def go_goal(self,travel_time = 0.5, goal = 1, location = 2):
+        global startlocation
+
+        self.location = self.goallist[location]
+        self.goal = self.goallist[goal]
+        self.map[self.location] = 1
+        self.map[self.goal] = 2
+        self.finish = True 
+        remove_list = self.point[:]
+        goal_point = self.goal[:]
+
+        for i in remove_list:
+            if self.location[0] - self.goal[0] < 0:
+                if self.location[0] > i[0]:
+                    self.point.remove(i)
+            else:
+                if self.location[0] < i[0]:
+                    self.point.remove(i)
+
+        #print(self.point)
+        for i in self.point:
+            self.map[i] = 3
+
+        while self.finish:
+
+            self.check_cross()
+            print(self.location)
+
+            if self.stack >= 2:
+                print(goal_point,"##goal_point##")
+                if goal_point:
+                    if (self.location[1] == goal_point[1] and abs(self.location[0] - goal_point[0]) <= 4) or (self.location[0] == goal_point[0] and abs(self.location[1] - goal_point[1]) <= 4):
+                        self.map[self.location] = 0 
+                        self.location = goal_point
+                        if self.map[self.location] != 2:
+                            self.map[self.location] = 1 
+
+            for i in self.point:
+                if self.location == i:
+                    self.point.remove(i)
+
+            if 2 in self.map[self.location[0]]:
+                goal_point = []
+                point_distance = []
+
+                for i in self.point:
+                    point_distance.append(abs(self.location[0] - i[0]))
+                
+                if point_distance:
+                    goal_point = self.point[point_distance.index(min(point_distance))]
+                    print(goal_point,"##goal_point##")
+                if abs(self.location[1] - self.goal[1]) <= 7: ######
+                    self.check_wall = True
+                    print(abs(self.location[1] - self.goal[1]))
+
+                if self.goal[1] == self.location[1]:
+                    #print(self.map[:])
+
+                    self.finish = False
+                    if 110 > self.direction and 70 < self.direction:
+
+                        self.omni.forward([10,10,10])
+                        self.omni.forward([10,10,10])
+                        self.omni.forward([10,10,10])
+                        while True:
+                            if self.goal == (2,20):
+                                if 170 < self.direction and self.direction <190:
+                                    self.omni.stop()
+                                    self.omni.stop()
+                                    self.omni.stop()
+                                    self.stack = 0
+                                    self.lidarvalue = [1000,1000,1000,0]
+                                    self.check_wall = False
+                                    self.point =[(2, 26), (27, 26), (39, 26), (51, 26), (63, 26), (79, 26)]
+                                    startlocation = self.goallist.index(self.goal)
+                                    return
+                            elif self.goal == (79,30):
+                                if (350 < self.direction and self.direction < 360) or (10 > self.direction and self.direction > 0):
+                                    self.omni.stop()
+                                    self.omni.stop()
+                                    self.omni.stop()
+                                    self.stack = 0
+                                    self.lidarvalue = [1000,1000,1000,0]
+                                    self.check_wall = False
+                                    self.point =[(2, 26), (27, 26), (39, 26), (51, 26), (63, 26), (79, 26)]
+                                    startlocation = self.goallist.index(self.goal)
+                                    return                               
+
+
+                            time.sleep(0.001)
+                            if 260 < self.direction and self.direction <280:
+                                self.omni.stop()
+                                self.omni.stop()
+                                self.omni.stop()
+                                self.stack = 0
+                                self.lidarvalue = [1000,1000,1000,0]
+                                self.check_wall = False
+                                self.point =[(2, 26), (27, 26), (39, 26), (51, 26), (63, 26), (79, 26)]
+                                startlocation = self.goallist.index(self.goal)
+                                return
+
+                    elif 250 < self.direction and 290 > self.direction:
+                        self.omni.forward([10,10,10])
+                        self.omni.forward([10,10,10])
+                        self.omni.forward([10,10,10])
+                        while True:
+                            time.sleep(0.001)
+                            if 80 < self.direction and self.direction <100:
+                                self.omni.stop()
+                                self.omni.stop()
+                                self.omni.stop()
+                                self.stack = 0
+                                self.lidarvalue = [1000,1000,1000,0]
+                                self.check_wall = False
+                                self.point =[(2, 26), (27, 26), (39, 26), (51, 26), (63, 26), (79, 26)]
+                                startlocation = self.goallist.index(self.goal)
+                                return        
+
+                elif self.goal[1] > self.location[1]:                
+                    self.move(travel_time, 90)
+                    self.map[self.location] = 0
+                    self.location = (self.location[0], self.location[1]+1)
+                    if self.map[self.location] != 2:
+                        self.map[self.location] = 1
+                    #print(self.map[:])
+
+                elif self.goal[1] < self.location[1]:
+                    self.move(travel_time, 270)
+                    self.map[self.location] = 0
+                    self.location = (self.location[0], self.location[1]-1)
+                    if self.map[self.location] != 2:
+                        self.map[self.location] = 1
+                    #print(self.map[:])
+
+            elif 3 in self.map[:,self.location[1]]:
+                goal_point = []
+                point_distance = []
+
+                for i in self.point:
+                    point_distance.append(abs(self.location[0] - i[0]))
+                
+                if point_distance:
+                    print(self.point,"##self.point##")
+                    print(point_distance, "##point_distance##")
+                    goal_point = self.point[point_distance.index(min(point_distance))]
+                    print(goal_point,"##goal_point##")
+                
+                if goal_point[0] < self.location[0]:
+                    self.move(travel_time, 0)
+                    self.map[self.location] = 0
+                    self.location = (self.location[0]-1, self.location[1])
+                    self.map[self.location] = 1
+                    #print(self.map[:])
+
+                elif goal_point[0] > self.location[0]:
+                    self.move(travel_time, 180)
+                    self.map[self.location] = 0
+                    self.location = (self.location[0]+1, self.location[1])
+                    self.map[self.location] = 1
+                    #print(self.map[:])
+
+            elif 3 in self.map[self.location[0]]:
+                goal_point = []
+                point_distance = []
+
+                for i in self.point:
+                    point_distance.append(abs(self.location[0] - i[0]))
+                
+                if point_distance:
+                    goal_point = self.point[point_distance.index(min(point_distance))]
+                    print(goal_point,"##goal_point##")
+                if goal_point[1] > self.location[1]:
+                    self.move(travel_time, 90)
+                    self.map[self.location] = 0
+                    self.location = (self.location[0], self.location[1]+1)
+                    self.map[self.location] = 1
+                    #print(self.map[:])
+
+                elif goal_point[1] < self.location[1]:
+                    self.move(travel_time, 270)
+                    self.map[self.location] = 0
+                    self.location = (self.location[0], self.location[1]-1)
+                    self.map[self.location] = 1
+                    #print(self.map[:])    
+
+            else:
+                goal_point = []
+                point_distance = []
+
+                for i in self.point:
+                    point_distance.append(abs(self.location[0] - i[0]))
+                
+                if point_distance:
+                    goal_point = self.point[point_distance.index(min(point_distance))]
+                    print(goal_point,"##goal_point##")
+
+                if goal_point[1] > self.location[1]:
+                    self.move(travel_time, 90)
+                    self.map[self.location] = 0
+                    self.location = (self.location[0], self.location[1]+1)
+                    self.map[self.location] = 1
+                    #print(self.map[:])
+
+                elif goal_point[1] < self.location[1]:
+                    self.move(travel_time, 270)
+                    self.map[self.location] = 0
+                    self.location = (self.location[0], self.location[1]-1)
+                    self.map[self.location] = 1
+                    #print(self.map[:])
+
+    def move(self,travel_time, direction):
+        global startlocation
+
+        print(self.direction)
+        delay_t = 0
+        start_t = time.time()
+        end_t = start_t
+        turn = False
+
+        while (start_t - end_t)>=-travel_time:
+            #print(self.lidarvalue)
+            if not turn:
+                if self.lidarvalue[0]< 270:
+                    if self.check_wall:
+                        if (110 > self.direction) and (70 < self.direction):
+                            self.omni.forward([10,10,10])
+                            self.omni.forward([10,10,10])
+                            self.omni.forward([10,10,10])
+                            while True:
+                                time.sleep(0.001)
+                                if (260 < self.direction) and (self.direction <280):
+                                    self.map[self.location] = 0 
+                                    self.location = self.goal
+                                    if self.map[self.location] != 2:
+                                        self.map[self.location] = 1
+                                    self.omni.stop()
+                                    self.omni.stop()
+                                    self.omni.stop()
+                                    self.stack = 0
+                                    self.lidarvalue = [1000,1000,1000,0]
+                                    self.check_wall = False
+                                    self.point =[(2, 26), (27, 26), (39, 26), (51, 26), (63, 26), (79, 26)]
+                                    startlocation = self.goallist.index(self.goal)
+                                    self.finish = False
+                                    return
+                                
+
+                        elif 250 < self.direction and 290 > self.direction:
+                            self.omni.forward([10,10,10])
+                            self.omni.forward([10,10,10])
+                            self.omni.forward([10,10,10])
+                            while True:
+                                time.sleep(0.001)
+                                if 80 < self.direction and self.direction <100:
+                                    self.map[self.location] = 0 
+                                    self.location = self.goal
+                                    if self.map[self.location] != 2:
+                                        self.map[self.location] = 1
+                                    self.omni.stop()
+                                    self.omni.stop()
+                                    self.omni.stop()
+                                    self.stack = 0
+                                    self.lidarvalue = [1000,1000,1000,0]
+                                    self.check_wall = False
+                                    self.point =[(2, 26), (27, 26), (39, 26), (51, 26), (63, 26), (79, 26)]
+                                    startlocation = self.goallist.index(self.goal)
+                                    self.finish = False
+                                    return 
+                            
+                    else:
+                        print("area[0] <270")
+                        self.omni.stop()
+                        time.sleep(0.5)
+                        delay_t = travel_time + (start_t - end_t)
+                        print(delay_t,"##남은시간##")
+                        travel_time = delay_t
+                        start_t = time.time()
+                        end_t = start_t
+                        turn = False
+                        continue      
+
+                elif self.lidarvalue[1] < self.lidarvalue[2] and self.lidarvalue[1] <240:
+                    print("area[1] < area[2] and area[1] < 240")
+                    self.serbot.move(90,30)
+                    time.sleep(0.3)
+                    delay_t = travel_time + (start_t - end_t)
+                    print(delay_t,"##남은시간##")
+                    travel_time = delay_t
+                    start_t = time.time()
+                    end_t = start_t
+                    turn = False
+                    continue  
+
+
+                elif self.lidarvalue[1] > self.lidarvalue[2] and self.lidarvalue[2] <230:
+                    print("area[2] > area[1] and area[2] < 230")
+                    self.serbot.move(270,30)
+                    time.sleep(0.3)
+                    delay_t = travel_time + (start_t - end_t)
+                    print(delay_t,"##남은시간##")
+                    travel_time = delay_t
+                    start_t = time.time()
+                    end_t = start_t
+                    turn = False
+                    continue  
+
+            if self.direction > 180:
+                t_direction = 360 - self.direction
+            else:
+                t_direction = self.direction
+            
+            if direction > 180:
+                g_direction = 360 - direction
+            else:
+                g_direction = direction
+
+            if (t_direction - g_direction)**2 > 30:
+                turn = True
+                if (self.direction-direction)%360 < 180:
+                    self.omni.forward([10,10,10])
+                    if (t_direction - g_direction)**2 < 25:
+                        if (t_direction - g_direction)**2 > 8:
+                            if (self.direction-direction)%360 < 180:
+                                turn = False
+                                self.omni.wheel(1,40)
+                                self.omni.wheel(2,-55.5)                              
+                                end_t = time.time()
+                                
+                            else:
+                                turn = False
+                                self.omni.wheel(1,55)
+                                self.omni.wheel(2,-40.5)                                
+                                end_t = time.time()
+
+                        else:
+                            turn = False
+                            self.omni.wheel(1,40)
+                            self.omni.wheel(2,-40.5)
+                            
+                            end_t = time.time()
+                else:
+                    self.omni.backward([10,10,10])
+                    if (t_direction - g_direction)**2 < 25:
+                        if (t_direction - g_direction)**2 > 8:
+                            if (self.direction-direction)%360 < 180:
+                                turn = False
+                                self.omni.wheel(1,40)
+                                self.omni.wheel(2,-55.5)                             
+                                end_t = time.time()
+                            else:
+                                turn = False
+                                self.omni.wheel(1,55)
+                                self.omni.wheel(2,-40.5)                               
+                                end_t = time.time()
+
+                        else:
+                            turn = False
+                            self.omni.wheel(1,40)
+                            self.omni.wheel(2,-40.5)                            
+                            end_t = time.time()
+     
+            else:
+                turn = True
+                if (t_direction - g_direction)**2 > 8:
+                    if (self.direction-direction)%360 < 180:
+                        turn = False
+                        self.omni.wheel(1,40)
+                        self.omni.wheel(2,-55.5)                      
+                        end_t = time.time()
+                    else:
+                        turn = False
+                        self.omni.wheel(1,55)
+                        self.omni.wheel(2,-40.5)                        
+                        end_t = time.time()
+
+                else:
+                    turn = False
+                    self.omni.wheel(1,40)
+                    self.omni.wheel(2,-40.5)              
+                    end_t = time.time()
+
+    def getAngle(self):
+        while True:
+            time.sleep(0.01)
+            try:
+                while True:
+                    time.sleep(0.01)
+                    self.ret = self.ser.readline()
+
+                    if self.ret:
+                        if len(self.ret.decode()[:-3]) > 82:      
+                            break
+                
+                self.signal = self.ret.decode()[:-3].split(',&')
+                self.direction_n = self.signal[2].split(',')
+                direction = [0,0,0]
+
+
+                direction[0] = float(self.direction_n[0])
+                direction[1] = float(self.direction_n[3])
+                direction[2] = float(self.direction_n[0])
+
+                if direction[1] < 0:
+                    direction[0] *= -1
+                if direction[2] < 0:
+                    direction[1] *= -1
+                
+                if direction[0] > -0.72 and direction[0] < 0.72:
+                    self.direction = ((np.arccos(float(direction[0]))*(-2)*(180/math.pi)))%360
+                else:
+                    self.direction = ((np.arcsin(float(direction[1]))*(-2)*(180/math.pi)))%360 
+
+            except ValueError:
+               break
+            #print(self.direction)
+        self.ser.close()
 
 # class Voice:
 
@@ -105,12 +597,14 @@ class RoadmapWindow(QMainWindow):
         self.baseLabel.move(0,0)
         self.baseLabel.resize(1280,720)
         self.baseLabel.setPixmap(QPixmap("pic/base.png"))
+        self.baseLabel.show()
 
         self.intro0 = QLabel(self)
         self.intro0.move(280,20)
         self.intro0.resize(1000,600)
         self.intro0.setText("(O) (O)\n(●'◡'●)")
         self.intro0.setFont(QFont('MesloLGS NF', 170))
+        self.intro0.show()
 
         self.intro1 = QLabel(self)
         self.intro1.move(280,20)
@@ -118,13 +612,15 @@ class RoadmapWindow(QMainWindow):
         self.intro1.setText("\n ●   ● ")
         self.intro1.setFont(QFont('MesloLGS NF', 170))
         self.intro1.setStyleSheet("color:#FF6FB7")
+        self.intro1.show()
 
         self.introText = QLabel(self)
         self.introText.move(300,530)
         self.introText.resize(1000,200)
         self.introText.setText("안내를 원하시면 화면을 클릭해주세요")
         self.introText.setFont(QFont('MesloLGS NF', 40))
-        
+        self.introText.show()
+
         self.introBt = QPushButton(self)
         self.introBt.move(0,0)
         self.introBt.resize(1280,720)
@@ -137,10 +633,20 @@ class RoadmapWindow(QMainWindow):
         self.exitBt.clicked.connect(self.onExitBtClicked)
         self.exitBt.setStyleSheet("background:transparent; border:0px; color:#F0F0F0")
         self.exitBt.setFont(QFont('MesloLGS NF', 25))
-        # self.exitBt.setStyleSheet(")
         self.exitBt.raise_()
 
+
+        thIntro = Thread(target=self.intro)
+        thIntro.daemon = True
+        thIntro.start()
+
         # self.init()
+
+    def intro(self):
+        time.sleep(1)
+        with subprocess.Popen(['play', "voice/mainVoice0.mp3"]) as p:    # "안녕하세요"
+            p.wait()
+
 
     def init(self):
         self.destination = self.now = (14,30)
@@ -190,23 +696,8 @@ class RoadmapWindow(QMainWindow):
         self.destButton()
 
 
-        # 소리파일 생성 (TTS)
-        # textList = ["","","","",""]  # 금동대향로, 금제뒤꽂이, 금제관식,금귀걸이, 무령왕
-            
-        # textList[0] = "무령왕 금제관식은 공주시 무령왕릉에서 출토된 백제 시대의 금으로 만든 왕관 꾸미개 한쌍이다. 1974년 7월 9일 대한민국의 국보 제154호로 지정되었다."
 
-        # textList[1] = "무령왕 금귀걸이는 충청남도 공주시 무령왕릉에서 출토된 백제시대의 금 귀고리 한 쌍으로 국립공주박물관에 소장되어 있다. 1974년 7월 9일 대한민국의 국보 제156호로 지정되었다."
 
-        # textList[2] = """백제 금동대향로는 백제에서 만들어진 금동 향로이다. 1993년 12월 12일 부여군 능산리 절터의 목곽 수로 안에서 발견되었으며 국보 제287호로 지정되었다."""
-
-        # textList[3] = "금제뒤꽂이는 충청남도 공주시 금성동 송산리 고분군에 위치한 무령왕릉에서 1971년 여러 유물들과 함께 출토된 무령왕의 금제 뒤꽂이 한점이 발견되었다. 현재 국립공주박물관에 소장 중이며, 대한민국 국보 제159호로 지정되어 있다"
-
-        # textList[4] = """백제의 제25대 국왕이자 건길지. 삼국사기에 따르면 키가 8척이고 눈매가 그림과 같았으며 인망이 두터웠다고 한다. 키가 8척이면 한척으로도 190cm라는 뜻인데, 무령왕릉에서는 무령왕의 유해로 추정되는 뼛조각만이 몇 개 출토되어서 사실 확인은 불가능하다.."""
-
-        # for i in range(5):
-        # #     explain[i] = "explain"+i+".mp3"
-        #     tts = gTTS(textList[i], lang='ko')
-        #     tts.save("explain"+str(i)+".mp3")
 
 
     def drawRoad(self, now, destination=(14,30)):
@@ -370,15 +861,16 @@ class RoadmapWindow(QMainWindow):
 
 
     def onButtonClicked(self, btNum):   # 버튼 동작 - 노선 이미지 출력
-        destinationList = [(11,29.5), (1.5,1), (8,0.5), (13.5,0.5), (0.5,7), (0.5,12), (0.5,17), (0.5,22), (0.5,27), (14.5,7), (14.5,12), (14.5,17), (14.5,22)]
+        self.destinationList = [(11,29.5), (1.5,1), (8,0.5), (13.5,0.5), (0.5,7), (0.5,12), (0.5,17), (0.5,22), (0.5,27), (14.5,7), (14.5,12), (14.5,17), (14.5,22)]
         pictureNameList = ["start.png", "charge.png", "photo.png", "wc.png", "crown.png", "earring.png", "thurible.png", "headdress.png", "tomb.png", "shop.png", "activity2.png", "activity1.png", "king.png"]
 
-        self.drawRoad(self.now, destinationList[btNum])
+        self.drawRoad(self.now, self.destinationList[btNum])
         self.loadRoad()
         self.label_pic.setPixmap(QPixmap("pic/"+pictureNameList[btNum]))
         self.label_pic.setAlignment(Qt.AlignCenter)
         self.raiseBt()
         print(pictureNameList[btNum][:-4]+" button clicked")
+        self.btNum = btNum
 
 
     def raiseBt(self):                  # 레이블, 버튼을 최상위로 이동
@@ -404,6 +896,22 @@ class RoadmapWindow(QMainWindow):
     def onGuideBtClicked(self):         # 안내시작버튼 클릭
         print("guide")
         # print(now[0], now[1])
+
+        self.voice(self.btNum)
+
+
+        def callback(in_data, frame_count, time_info, status):
+            data = w.readframes(frame_count)
+            return (data, pyaudio.paContinue)
+
+        w = wave.open("music/music{}.wav".format(randint(1,8)), "rb")                # 음악재생
+        self.p = pyaudio.PyAudio()
+        
+        self.stream = self.p.open(format=self.p.get_format_from_width(w.getsampwidth()), channels=w.getnchannels(),
+                        rate=w.getframerate(), output=True, stream_callback=callback) 
+        
+        self.stream.start_stream()
+
 
         print("주행거리 :",self.runLength)
 
@@ -431,9 +939,9 @@ class RoadmapWindow(QMainWindow):
         thDrive.start()
         # thDrive.join() 
 
-        for i in range(int(self.rtime)):                 # 주행 쓰레드
-            print(int(self.rtime)-i)
-            time.sleep(1)
+        destinationList = [(11,29.5), (1.5,1), (8,0.5), (13.5,0.5), (0.5,7), (0.5,12), (0.5,17), (0.5,22), (0.5,27), (14.5,7), (14.5,12), (14.5,17), (14.5,22)]
+        idxDest = destinationList.index(self.destination)
+        map.go_goal(0.6,idxDest,startlocation)
 
 
         # while True:            
@@ -471,6 +979,10 @@ class RoadmapWindow(QMainWindow):
         self.drawRoad(self.now, self.now)
         self.loadRoad()
 
+        self.stream.stop_stream()       # 노래끄기
+        self.stream.close()
+        self.p.terminate()
+
         if self.destination   == (0.5,7):   self.explain(0)
         elif self.destination == (0.5,12):  self.explain(1)
         elif self.destination == (0.5,17):  self.explain(2)
@@ -481,6 +993,7 @@ class RoadmapWindow(QMainWindow):
 
 
     def explain(self,exNum):                    # 작품설명
+
         explainTime = [15.6, 17.7, 15.8, 21.9, 23.7]    # 설명시간 - (금제관식,귀걸이,향로,뒤꽂이,무령왕)
         print("설명시간 : {}초".format(explainTime[exNum]))
 
@@ -511,8 +1024,7 @@ class RoadmapWindow(QMainWindow):
         thExp.start()
         # thExp.join()                           
 
-        filename = ['explain0.mp3', 'explain1.mp3', 'explain2.mp3', 'explain3.mp3', 'explain4.mp3']        
-        with subprocess.Popen(['play', filename[exNum]]) as p:  
+        with subprocess.Popen(['play', "explain{}.mp3".format(exNum)]) as p:  
             p.wait()
 
         print("prgVoice end")
@@ -563,7 +1075,6 @@ class RoadmapWindow(QMainWindow):
             time.sleep(self.rtime/101)
 
 
-
     def thExplain(self):#, exNum):                  # 설명 Thread - progress_bar
         print("설명시간(thread): ", self.etime)
 
@@ -586,13 +1097,12 @@ class RoadmapWindow(QMainWindow):
             time.sleep(self.etime/101)
         
 
-
     def onExitBtClicked(self):
         print("Bye")
         QCoreApplication.instance().quit()
 
 
-    # def movingInfo(self, moveStart, moveEnd, speed=0.675):
+    # def movingInfo(self, moveStart, moveEnd, speed=0.675):    # 이동정보
     #     # moveStart = (2,2)
     #     # moveEnd = (1,1)
 
@@ -616,9 +1126,75 @@ class RoadmapWindow(QMainWindow):
     #     print("시간: %.2fs"%(distance/speed), "\n\n")
 
 
+    def userAction(self, text):
+        print(text)
+
+        if text.find("처음") != -1 or text.find("입구") != -1: self.voice(0); self.onButtonClicked(0)
+        elif text.find("충전") != -1: self.voice(1); self.onButtonClicked(1)
+        elif text.find("포토") != -1 or text.find("사진") != -1: self.voice(2); self.onButtonClicked(2)
+        elif text.find("화장") != -1 or text.find("출구") != -1 : self.voice(3); self.onButtonClicked(3)
+        elif text.find("관식") != -1: self.voice(4); self.onButtonClicked(4)
+        elif text.find("귀걸이") != -1: self.voice(5); self.onButtonClicked(5)
+        elif text.find("향로") != -1: self.voice(6); self.onButtonClicked(6)
+        elif text.find("뒤꽂이") != -1: self.voice(7); self.onButtonClicked(7)
+        elif text.find("무덤") != -1 or text.find("모형") != -1 : self.voice(8); self.onButtonClicked(8)
+        elif text.find("기념품") != -1: self.voice(9); self.onButtonClicked(9)
+        elif text.find("체험") != -1: self.voice(11); self.onButtonClicked(11)
+        elif text.find("역사") != -1: self.voice(12); self.onButtonClicked(12)
+        elif text.find("다음") != -1: 
+            self.voice((self.nowNum+1)%13)
+            self.onButtonClicked((self.nowNum+1)%13)
+
+        if text.find("안내") != -1 or text.find("시작") != -1 or text.find("출발") != -1 or text.find("앞으로가") != -1 or text.find("이동") != -1 or text.find("가자") != -1 or text.find("가줘") != -1 or text.find("고고") != -1:
+
+            self.onGuideBtClicked()
+
+            # bot.forward()
+            # action = True
+
+        # return True
+
+    def voice(self, voiceNum):
+        self.nowNum = voiceNum
+
+        voiceName = "voice/voiceDest{}.mp3".format(voiceNum)#self.btNum)
+        with subprocess.Popen(['play', voiceName]) as p:        # gtts멘트 실행 - '장소'로
+            p.wait()
+
+        with subprocess.Popen(['play', "voice/mainVoice1.mp3"]) as p1:  # 안내합니다
+            p1.wait()
+
+    def gAssist(self):
+        self.stream = create_conversation_stream()
+        self.ga = GAssistant(self.stream, local_device_handler=self.userAction)
+
+    def gA(self):
+        try:
+            while True:
+                self.ga.assist(self.onStart)
+        except:
+            pass
+
+    def onStart(self): 
+        print(">>> Start recording....")
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    map = mapping(width = 80, height = 40)
+
+    th0 = Thread(target=map.getAngle)
+    th1 = Thread(target=map.check_lidar)
+    th2 = Thread(target=map.get_signal)
+    th0.daemon = True
+    th1.daemon = True
+    th2.daemon = True
+    th0.start()
+    th1.start()
+    th2.start()
+    th2.join()
+
+    time.sleep(1)
+    
     roadmapWindow = RoadmapWindow()
     roadmapWindow.showFullScreen()
     sys.exit(app.exec_())
